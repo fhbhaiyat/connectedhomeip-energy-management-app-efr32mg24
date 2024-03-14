@@ -1,4 +1,7 @@
-# Copyright (c) 2022 Project CHIP Authors
+#!/bin/bash
+
+#
+# Copyright (c) 2024 Project CHIP Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,20 +15,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import("//build_overrides/chip.gni")
-import("${chip_root}/build/chip/tests.gni")
+ROOT_DIR=$(realpath "$(dirname "$0")"/../..)
+cd "$ROOT_DIR"
 
-group("openiotsdk") {
-  deps = [ "${chip_root}/src/lib" ]
+SPEC_VERSION=$(head -n 1 "$ROOT_DIR"/SPECIFICATION_VERSION)
+SPEC_SHA=$(head -n 1 "$ROOT_DIR"/data_model/spec_sha)
+SCRAPPER_VERSION=$(head -n 1 "$ROOT_DIR"/data_model/scraper_version)
 
-  if (chip_build_tests) {
-    deps += [
-      "${chip_root}/src:tests",
-      "${chip_root}/src/lib/support:pw_tests_wrapper",
-    ]
-  }
-}
-
-group("default") {
-  deps = [ ":openiotsdk" ]
-}
+echo 'SPEC VERSION:' "$SPEC_VERSION"
+echo 'SPEC SHA:' "$SPEC_SHA"
+echo 'SCRAPER VERSION:' "$SCRAPPER_VERSION"
