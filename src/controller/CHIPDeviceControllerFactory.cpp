@@ -305,11 +305,16 @@ void DeviceControllerFactory::PopulateInitParams(ControllerInitParams & controll
     controllerParams.controllerRCAC                       = params.controllerRCAC;
     controllerParams.permitMultiControllerFabrics         = params.permitMultiControllerFabrics;
     controllerParams.removeFromFabricTableOnShutdown      = params.removeFromFabricTableOnShutdown;
+    controllerParams.deleteFromFabricTableOnShutdown      = params.deleteFromFabricTableOnShutdown;
 
     controllerParams.systemState        = mSystemState;
     controllerParams.controllerVendorId = params.controllerVendorId;
 
     controllerParams.enableServerInteractions = params.enableServerInteractions;
+    if (params.fabricIndex.HasValue())
+    {
+        controllerParams.fabricIndex.SetValue(params.fabricIndex.Value());
+    }
 }
 
 void DeviceControllerFactory::ControllerInitialized(const DeviceController & controller)
@@ -387,9 +392,9 @@ void DeviceControllerFactory::RetainSystemState()
     (void) mSystemState->Retain();
 }
 
-void DeviceControllerFactory::ReleaseSystemState()
+bool DeviceControllerFactory::ReleaseSystemState()
 {
-    mSystemState->Release();
+    return mSystemState->Release();
 }
 
 DeviceControllerFactory::~DeviceControllerFactory()

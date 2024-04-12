@@ -26,6 +26,7 @@
 #include "AndroidCurrentFabricRemover.h"
 #include "AndroidDeviceControllerWrapper.h"
 #include "AndroidInteractionClient.h"
+#include <controller/java/ControllerConfig.h>
 #include <lib/support/CHIPJNIError.h>
 #include <lib/support/JniReferences.h>
 #include <lib/support/JniTypeWrappers.h>
@@ -57,7 +58,7 @@
 #include <system/SystemClock.h>
 #include <vector>
 
-#ifdef CHIP_DEVICE_CONFIG_DYNAMIC_SERVER
+#if CHIP_DEVICE_CONFIG_DYNAMIC_SERVER
 #include <app/dynamic_server/AccessControl.h>
 #endif // CHIP_DEVICE_CONFIG_DYNAMIC_SERVER
 
@@ -76,6 +77,7 @@ using namespace chip;
 using namespace chip::Inet;
 using namespace chip::Controller;
 using namespace chip::Credentials;
+using namespace chip::Crypto;
 
 #define JNI_METHOD(RETURN, METHOD_NAME)                                                                                            \
     extern "C" JNIEXPORT RETURN JNICALL Java_chip_devicecontroller_ChipDeviceController_##METHOD_NAME
@@ -131,7 +133,7 @@ jint JNI_OnLoad(JavaVM * jvm, void * reserved)
     SuccessOrExit(err);
 #endif // JAVA_MATTER_CONTROLLER_TEST
 
-#ifdef CHIP_DEVICE_CONFIG_DYNAMIC_SERVER
+#if CHIP_DEVICE_CONFIG_DYNAMIC_SERVER
     chip::app::dynamic_server::InitAccessControl();
 #endif // CHIP_DEVICE_CONFIG_DYNAMIC_SERVER
 
@@ -161,7 +163,7 @@ void JNI_OnUnload(JavaVM * jvm, void * reserved)
     chip::Platform::MemoryShutdown();
 }
 
-JNI_METHOD(jint, onNOCChainGeneration)
+JNI_METHOD(jlong, onNOCChainGeneration)
 (JNIEnv * env, jobject self, jlong handle, jobject controllerParams)
 {
     chip::DeviceLayer::StackLock lock;
@@ -266,7 +268,7 @@ JNI_METHOD(jint, onNOCChainGeneration)
         {
             ChipLogError(Controller, "Failed to SetNocChain for the device: %" CHIP_ERROR_FORMAT, err.Format());
         }
-        return static_cast<jint>(err.AsInteger());
+        return static_cast<jlong>(err.AsInteger());
 #endif // JAVA_MATTER_CONTROLLER_TEST
     }
 exit:
@@ -274,7 +276,7 @@ exit:
     err = wrapper->GetAndroidOperationalCredentialsIssuer()->NOCChainGenerated(err, ByteSpan(), ByteSpan(), ByteSpan(), ipkOptional,
                                                                                adminSubjectOptional);
 #endif // JAVA_MATTER_CONTROLLER_TEST
-    return static_cast<jint>(err.AsInteger());
+    return static_cast<jlong>(err.AsInteger());
 }
 
 JNI_METHOD(jlong, newDeviceController)(JNIEnv * env, jobject self, jobject controllerParams)
@@ -1903,7 +1905,7 @@ JNI_METHOD(jobject, getDiscoveredDevice)(JNIEnv * env, jobject self, jlong handl
 
     jobject discoveredObj = env->NewObject(discoveredDeviceCls, constructor);
 
-    env->SetLongField(discoveredObj, discrminatorID, data->commissionData.longDiscriminator);
+    env->SetLongField(discoveredObj, discrminatorID, data->nodeData.longDiscriminator);
 
     char ipAddress[100];
     data->resolutionData.ipAddress[0].ToString(ipAddress, 100);
@@ -1911,13 +1913,13 @@ JNI_METHOD(jobject, getDiscoveredDevice)(JNIEnv * env, jobject self, jlong handl
 
     env->SetObjectField(discoveredObj, ipAddressID, jniipAdress);
     env->SetIntField(discoveredObj, portID, static_cast<jint>(data->resolutionData.port));
-    env->SetLongField(discoveredObj, deviceTypeID, static_cast<jlong>(data->commissionData.deviceType));
-    env->SetIntField(discoveredObj, vendorIdID, static_cast<jint>(data->commissionData.vendorId));
-    env->SetIntField(discoveredObj, productIdID, static_cast<jint>(data->commissionData.productId));
+    env->SetLongField(discoveredObj, deviceTypeID, static_cast<jlong>(data->nodeData.deviceType));
+    env->SetIntField(discoveredObj, vendorIdID, static_cast<jint>(data->nodeData.vendorId));
+    env->SetIntField(discoveredObj, productIdID, static_cast<jint>(data->nodeData.productId));
 
     jbyteArray jRotatingId;
-    CHIP_ERROR err = JniReferences::GetInstance().N2J_ByteArray(
-        env, data->commissionData.rotatingId, static_cast<jsize>(data->commissionData.rotatingIdLen), jRotatingId);
+    CHIP_ERROR err = JniReferences::GetInstance().N2J_ByteArray(env, data->nodeData.rotatingId,
+                                                                static_cast<jsize>(data->nodeData.rotatingIdLen), jRotatingId);
 
     if (err != CHIP_NO_ERROR)
     {
@@ -1925,12 +1927,12 @@ JNI_METHOD(jobject, getDiscoveredDevice)(JNIEnv * env, jobject self, jlong handl
         return nullptr;
     }
     env->SetObjectField(discoveredObj, rotatingIdID, static_cast<jobject>(jRotatingId));
-    env->SetObjectField(discoveredObj, instanceNameID, env->NewStringUTF(data->commissionData.instanceName));
-    env->SetObjectField(discoveredObj, deviceNameID, env->NewStringUTF(data->commissionData.deviceName));
-    env->SetObjectField(discoveredObj, pairingInstructionID, env->NewStringUTF(data->commissionData.pairingInstruction));
+    env->SetObjectField(discoveredObj, instanceNameID, env->NewStringUTF(data->nodeData.instanceName));
+    env->SetObjectField(discoveredObj, deviceNameID, env->NewStringUTF(data->nodeData.deviceName));
+    env->SetObjectField(discoveredObj, pairingInstructionID, env->NewStringUTF(data->nodeData.pairingInstruction));
 
-    env->CallVoidMethod(discoveredObj, setCommissioningModeID, static_cast<jint>(data->commissionData.commissioningMode));
-    env->CallVoidMethod(discoveredObj, setPairingHintID, static_cast<jint>(data->commissionData.pairingHint));
+    env->CallVoidMethod(discoveredObj, setCommissioningModeID, static_cast<jint>(data->nodeData.commissioningMode));
+    env->CallVoidMethod(discoveredObj, setPairingHintID, static_cast<jint>(data->nodeData.pairingHint));
 
     return discoveredObj;
 }
@@ -2237,12 +2239,12 @@ JNI_METHOD(jobject, getICDClientInfo)(JNIEnv * env, jobject self, jlong handle, 
         }
 
         err = chip::JniReferences::GetInstance().N2J_ByteArray(env, info.aes_key_handle.As<Crypto::Symmetric128BitsKeyByteArray>(),
-                                                               chip::CHIP_CRYPTO_SYMMETRIC_KEY_LENGTH_BYTES, jIcdAesKey);
+                                                               CHIP_CRYPTO_SYMMETRIC_KEY_LENGTH_BYTES, jIcdAesKey);
         VerifyOrReturnValue(err == CHIP_NO_ERROR, nullptr,
                             ChipLogError(Controller, "ICD AES KEY N2J_ByteArray error!: %" CHIP_ERROR_FORMAT, err.Format()));
 
         err = chip::JniReferences::GetInstance().N2J_ByteArray(env, info.hmac_key_handle.As<Crypto::Symmetric128BitsKeyByteArray>(),
-                                                               chip::CHIP_CRYPTO_SYMMETRIC_KEY_LENGTH_BYTES, jIcdHmacKey);
+                                                               CHIP_CRYPTO_SYMMETRIC_KEY_LENGTH_BYTES, jIcdHmacKey);
         VerifyOrReturnValue(err == CHIP_NO_ERROR, nullptr,
                             ChipLogError(Controller, "ICD HMAC KEY N2J_ByteArray error!: %" CHIP_ERROR_FORMAT, err.Format()));
 

@@ -45,6 +45,7 @@
 #include <platform/CHIPDeviceLayer.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
+#include <sl_cmsis_os2_common.h>
 
 #if CHIP_ENABLE_OPENTHREAD
 #include <platform/OpenThread/OpenThreadUtils.h>
@@ -78,8 +79,9 @@
 #ifndef APP_TASK_STACK_SIZE
 #define APP_TASK_STACK_SIZE (4096)
 #endif
-#define APP_TASK_PRIORITY 2
+#ifndef APP_EVENT_QUEUE_SIZE // Allow apps to define a different app queue size
 #define APP_EVENT_QUEUE_SIZE 10
+#endif
 #define EXAMPLE_VENDOR_ID 0xcafe
 
 #if (defined(ENABLE_WSTK_LEDS) && (defined(SL_CATALOG_SIMPLE_LED_LED1_PRESENT)))
@@ -121,18 +123,18 @@ bool sHaveBLEConnections = false;
 constexpr uint32_t kLightTimerPeriod = static_cast<uint32_t>(pdMS_TO_TICKS(10));
 
 uint8_t sAppEventQueueBuffer[APP_EVENT_QUEUE_SIZE * sizeof(AppEvent)];
-StaticQueue_t sAppEventQueueStruct; // TODO abstract type for static controlblock
+osMessageQueue_t sAppEventQueueStruct;
 constexpr osMessageQueueAttr_t appEventQueueAttr = { .cb_mem  = &sAppEventQueueStruct,
-                                                     .cb_size = sizeof(sAppEventQueueBuffer),
+                                                     .cb_size = osMessageQueueCbSize,
                                                      .mq_mem  = sAppEventQueueBuffer,
                                                      .mq_size = sizeof(sAppEventQueueBuffer) };
 
 uint8_t appStack[APP_TASK_STACK_SIZE];
-StaticTask_t appTaskStruct; // TODO abstract type for static controlblock
+osThread_t appTaskControlBlock;
 constexpr osThreadAttr_t appTaskAttr = { .name       = APP_TASK_NAME,
                                          .attr_bits  = osThreadDetached,
-                                         .cb_mem     = &appTaskStruct,
-                                         .cb_size    = sizeof(appTaskStruct),
+                                         .cb_mem     = &appTaskControlBlock,
+                                         .cb_size    = osThreadCbSize,
                                          .stack_mem  = appStack,
                                          .stack_size = APP_TASK_STACK_SIZE,
                                          .priority   = osPriorityNormal };
@@ -298,11 +300,11 @@ CHIP_ERROR BaseApplication::Init()
     return err;
 }
 
-void BaseApplication::FunctionTimerEventHandler(osTimerId_t xTimer)
+void BaseApplication::FunctionTimerEventHandler(void * timerCbArg)
 {
     AppEvent event;
     event.Type               = AppEvent::kEventType_Timer;
-    event.TimerEvent.Context = (void *) xTimer;
+    event.TimerEvent.Context = timerCbArg;
     event.Handler            = FunctionEventHandler;
     PostEvent(&event);
 }
@@ -677,7 +679,7 @@ void BaseApplication::OnTriggerIdentifyEffect(Identify * identify)
 }
 #endif // MATTER_DM_PLUGIN_IDENTIFY_SERVER
 
-void BaseApplication::LightTimerEventHandler(osTimerId_t xTimer)
+void BaseApplication::LightTimerEventHandler(void * timerCbArg)
 {
     LightEventHandler();
 }
