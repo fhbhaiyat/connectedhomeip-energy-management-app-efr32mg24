@@ -24,8 +24,9 @@
 #include "AppConfig.h"
 #include "AppEvent.h"
 #include "AppTask.h"
-
 #include <app/server/Server.h>
+
+#define APP_ACTION_BUTTON 1
 
 #ifdef DISPLAY_ENABLED
 #include "lcd.h"
@@ -34,10 +35,10 @@
 #endif // QR_CODE_ENABLED
 #endif // DISPLAY_ENABLED
 
-#include "SilabsDeviceDataProvider.h"
 #if CHIP_CONFIG_ENABLE_ICD_SERVER == 1
 #include <app/icd/server/ICDNotifier.h> // nogncheck
 #endif
+#include <ProvisionManager.h>
 #include <app/server/OnboardingCodesUtil.h>
 #include <app/util/attribute-storage.h>
 #include <assert.h>
@@ -515,9 +516,7 @@ void BaseApplication::ButtonHandler(AppEvent * aEvent)
                 SILABS_LOG("Network is already provisioned, Ble advertisement not enabled");
 #if CHIP_CONFIG_ENABLE_ICD_SERVER
                 // Temporarily claim network activity, until we implement a "user trigger" reason for ICD wakeups.
-                PlatformMgr().LockChipStack();
-                ICDNotifier::GetInstance().NotifyNetworkActivityNotification();
-                PlatformMgr().UnlockChipStack();
+                PlatformMgr().ScheduleWork([](intptr_t) { ICDNotifier::GetInstance().NotifyNetworkActivityNotification(); });
 #endif // CHIP_CONFIG_ENABLE_ICD_SERVER
             }
         }
@@ -746,6 +745,11 @@ void BaseApplication::DispatchEvent(AppEvent * aEvent)
 void BaseApplication::ScheduleFactoryReset()
 {
     PlatformMgr().ScheduleWork([](intptr_t) {
+        // Press both buttons to request provisioning
+        if (GetPlatform().GetButtonState(APP_ACTION_BUTTON))
+        {
+            Provision::Manager::GetInstance().SetProvisionRequired(true);
+        }
         PlatformMgr().HandleServerShuttingDown();
         ConfigurationMgr().InitiateFactoryReset();
     });
@@ -767,7 +771,8 @@ void BaseApplication::OutputQrCode(bool refreshLCD)
     char setupPayloadBuffer[chip::QRCodeBasicSetupPayloadGenerator::kMaxQRCodeBase38RepresentationLength + 1];
     chip::MutableCharSpan setupPayload(setupPayloadBuffer);
 
-    if (Silabs::SilabsDeviceDataProvider::GetDeviceDataProvider().GetSetupPayload(setupPayload) == CHIP_NO_ERROR)
+    CHIP_ERROR err = Provision::Manager::GetInstance().GetStorage().GetSetupPayload(setupPayload);
+    if (CHIP_NO_ERROR == err)
     {
         // Print setup info on LCD if available
 #ifdef QR_CODE_ENABLED

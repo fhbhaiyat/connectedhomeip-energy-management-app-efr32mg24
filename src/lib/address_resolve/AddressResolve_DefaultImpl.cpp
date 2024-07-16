@@ -287,12 +287,13 @@ void Resolver::OnOperationalNodeResolved(const Dnssd::ResolvedNodeData & nodeDat
 
         result.address.SetPort(nodeData.resolutionData.port);
         result.address.SetInterface(nodeData.resolutionData.interfaceId);
-        result.mrpRemoteConfig = nodeData.resolutionData.GetRemoteMRPConfig();
-        result.supportsTcp     = nodeData.resolutionData.supportsTcp;
+        result.mrpRemoteConfig   = nodeData.resolutionData.GetRemoteMRPConfig();
+        result.supportsTcpClient = nodeData.resolutionData.supportsTcpClient;
+        result.supportsTcpServer = nodeData.resolutionData.supportsTcpServer;
 
-        if (nodeData.resolutionData.isICDOperatingAsLIT.HasValue())
+        if (nodeData.resolutionData.isICDOperatingAsLIT.has_value())
         {
-            result.isICDOperatingAsLIT = nodeData.resolutionData.isICDOperatingAsLIT.Value();
+            result.isICDOperatingAsLIT = *(nodeData.resolutionData.isICDOperatingAsLIT);
         }
 
         for (size_t i = 0; i < nodeData.resolutionData.numIPs; i++)

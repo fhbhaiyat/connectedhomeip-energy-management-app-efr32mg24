@@ -32,10 +32,12 @@
 #include <platform/internal/GenericConnectivityManagerImpl_TCP.ipp>
 #endif
 
+#if CHIP_SYSTEM_CONFIG_USE_LWIP
 #include <lwip/dns.h>
 #include <lwip/ip_addr.h>
 #include <lwip/nd6.h>
 #include <lwip/netif.h>
+#endif
 
 #if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
 #include <platform/internal/GenericConnectivityManagerImpl_BLE.ipp>
@@ -152,6 +154,11 @@ void ConnectivityManagerImpl::_OnPlatformEvent(const ChipDeviceEvent * event)
         {
             free(event->Platform.pNetworkDataEvent);
         }
+    }
+    else if (event->Type == kPlatformNxpScanWiFiNetworkDoneEvent)
+    {
+        NetworkCommissioning::NXPWiFiDriver::GetInstance().ScanWiFINetworkDoneFromMatterTaskContext(
+            event->Platform.ScanWiFiNetworkCount);
     }
 #endif
 }
@@ -590,6 +597,44 @@ void ConnectivityManagerImpl::ConnectNetworkTimerHandler(::chip::System::Layer *
         PlatformMgr().UnlockChipStack();
     }
 }
+
+/* Can be used to disconnect from WiFi network.
+ */
+CHIP_ERROR ConnectivityManagerImpl::_DisconnectNetwork(void)
+{
+    int ret        = 0;
+    CHIP_ERROR err = CHIP_NO_ERROR;
+
+    if (ConnectivityMgrImpl().IsWiFiStationConnected())
+    {
+        ChipLogProgress(NetworkProvisioning, "Disconnecting from WiFi network.");
+
+        ret = wlan_disconnect();
+
+        if (ret != WM_SUCCESS)
+        {
+            ChipLogError(NetworkProvisioning, "Failed to disconnect from network with error: %u", (uint8_t) ret);
+            err = CHIP_ERROR_UNEXPECTED_EVENT;
+        }
+    }
+    else
+    {
+        ChipLogError(NetworkProvisioning, "Error: WiFi not connected!");
+        err = CHIP_ERROR_INCORRECT_STATE;
+    }
+
+    return err;
+}
+
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+CHIP_ERROR ConnectivityManagerImpl::_SetPollingInterval(System::Clock::Milliseconds32 pollingInterval)
+{
+    /*
+     * ToDo: Call API to put device into sleep
+     */
+    return CHIP_NO_ERROR;
+}
+#endif // CHIP_CONFIG_ENABLE_ICD_SERVER
 #endif
 
 } // namespace DeviceLayer

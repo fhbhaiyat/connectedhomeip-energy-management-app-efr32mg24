@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 # Copyright (c) 2024 Project CHIP Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,37 +13,63 @@
 # limitations under the License.
 
 import os
+import tempfile
 import unittest
-from os import path
 
 from metadata import Metadata, MetadataReader
 
 
 class TestMetadataReader(unittest.TestCase):
-    path_under_test = path_under_test = path.join(path.dirname(__file__), "simple_run_args.txt")
 
-    def setUp(self):
+    test_file_content = '''
+    # === BEGIN CI TEST ARGUMENTS ===
+    # test-runner-runs: run1
+    # test-runner-run/run1/app: ${ALL_CLUSTERS_APP}
+    # test-runner-run/run1/app-args: --discriminator 1234 --trace-to json:${TRACE_APP}.json
+    # test-runner-run/run1/script-args: --commissioning-method on-network --trace-to json:${TRACE_TEST_JSON}.json --trace-to perfetto:${TRACE_TEST_PERFETTO}.perfetto
+    # test-runner-run/run1/factoryreset: True
+    # test-runner-run/run1/quiet: True
+    # === END CI TEST ARGUMENTS ===
 
-        # build the reader object
-        self.reader = MetadataReader(path.join(path.dirname(__file__), "env_test.yaml"))
-        with open(self.path_under_test, 'w', encoding='utf8') as test_file:
-            test_file.writelines(''' 
-            # test-runner-runs: run1 
-            # test-runner-run/run1: app/all-clusters discriminator KVS storage-path commissioning-method discriminator passcode
-            ''')
+    # test-runner-run/run1/quiet: False
+    '''
 
-    def test_parse_single_run(self):
+    env_file_content = '''
+    ALL_CLUSTERS_APP: out/linux-x64-all-clusters-ipv6only-no-ble-no-wifi-tsan-clang-test/chip-all-clusters-app
+    CHIP_LOCK_APP: out/linux-x64-lock-ipv6only-no-ble-no-wifi-tsan-clang-test/chip-lock-app
+    ENERGY_MANAGEMENT_APP: out/linux-x64-energy-management-ipv6only-no-ble-no-wifi-tsan-clang-test/chip-energy-management-app
+    TRACE_APP: out/trace_data/app-{SCRIPT_BASE_NAME}
+    TRACE_TEST_JSON: out/trace_data/test-{SCRIPT_BASE_NAME}
+    TRACE_TEST_PERFETTO: out/trace_data/test-{SCRIPT_BASE_NAME}
+    '''
 
-        expected_runs_metadata = []
+    expected_metadata = Metadata(
+        script_args="--commissioning-method on-network --trace-to json:out/trace_data/test-{SCRIPT_BASE_NAME}.json --trace-to perfetto:out/trace_data/test-{SCRIPT_BASE_NAME}.perfetto",
+        py_script_path="",
+        app_args="--discriminator 1234 --trace-to json:out/trace_data/app-{SCRIPT_BASE_NAME}.json",
+        run="run1",
+        app="out/linux-x64-all-clusters-ipv6only-no-ble-no-wifi-tsan-clang-test/chip-all-clusters-app",
+        factoryreset=True,
+        quiet=True
+    )
 
-        expected_runs_metadata.append(Metadata(app="out/linux-x64-all-clusters-ipv6only-no-ble-no-wifi-tsan-clang-test/chip-all-clusters-app",
-                                               discriminator=1234, py_script_path=self.path_under_test, run="run1", passcode=20202021))
+    def generate_temp_file(self, directory: str, file_content: str) -> str:
+        fd, temp_file_path = tempfile.mkstemp(dir=directory)
+        with os.fdopen(fd, 'w') as fp:
+            fp.write(file_content)
+        return temp_file_path
 
-        self.assertEqual(self.reader.parse_script(self.path_under_test), expected_runs_metadata)
+    def test_run_arg_generation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_file = self.generate_temp_file(temp_dir, self.test_file_content)
+            env_file = self.generate_temp_file(temp_dir, self.env_file_content)
 
-    def tearDown(self):
-        if os.path.exists(self.path_under_test):
-            os.remove(self.path_under_test)
+            reader = MetadataReader(env_file)
+            self.maxDiff = None
+
+            self.expected_metadata.py_script_path = temp_file
+            actual = reader.parse_script(temp_file)[0]
+            self.assertEqual(self.expected_metadata, actual)
 
 
 if __name__ == "__main__":

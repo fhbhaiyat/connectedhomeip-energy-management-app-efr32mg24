@@ -28,10 +28,12 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <ble/BleError.h>
+#include <pw_unit_test/framework.h>
+
 #include <lib/core/ErrorStr.h>
 
-#include <gtest/gtest.h>
+#define _CHIP_BLE_BLE_H
+#include <ble/BleError.h>
 
 using namespace chip;
 

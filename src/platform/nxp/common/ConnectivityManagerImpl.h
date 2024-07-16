@@ -87,6 +87,9 @@ public:
 
 #if CHIP_DEVICE_CONFIG_ENABLE_WPA
     void StartWiFiManagement();
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+    CHIP_ERROR _SetPollingInterval(System::Clock::Milliseconds32 pollingInterval);
+#endif // CHIP_CONFIG_ENABLE_ICD_SERVER
 #if CHIP_ENABLE_OPENTHREAD
     Inet::InterfaceId GetExternalInterface();
     Inet::InterfaceId GetThreadInterface();
@@ -115,6 +118,7 @@ private:
     bool _IsWiFiStationEnabled();
     bool _IsWiFiStationConnected();
     bool _IsWiFiStationApplicationControlled();
+    CHIP_ERROR _DisconnectNetwork(void);
 #endif /* CHIP_DEVICE_CONFIG_ENABLE_WPA */
 
     // ===== Members for internal use by the following friends.

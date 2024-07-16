@@ -18,7 +18,6 @@
 import argparse
 import asyncio
 import builtins
-import glob
 import inspect
 import json
 import logging
@@ -30,13 +29,12 @@ import re
 import sys
 import typing
 import uuid
-import xml.etree.ElementTree as ET
 from binascii import hexlify, unhexlify
 from dataclasses import asdict as dataclass_asdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 from chip.tlv import float32, uint
 
@@ -54,7 +52,7 @@ import chip.native
 from chip import discovery
 from chip.ChipStack import ChipStack
 from chip.clusters import ClusterObjects as ClusterObjects
-from chip.clusters.Attribute import EventReadResult, SubscriptionTransaction
+from chip.clusters.Attribute import EventReadResult, SubscriptionTransaction, TypedAttributePath
 from chip.exceptions import ChipStackError
 from chip.interaction_model import InteractionModelError, Status
 from chip.setup_payload import SetupPayload
@@ -64,6 +62,7 @@ from global_attribute_ids import GlobalAttributeIds
 from mobly import asserts, base_test, signals, utils
 from mobly.config_parser import ENV_MOBLY_LOGPATH, TestRunConfig
 from mobly.test_runner import TestRunner
+from pics_support import read_pics_from_file
 
 try:
     from matter_yamltests.hooks import TestRunnerHooks
@@ -140,50 +139,6 @@ def get_default_paa_trust_store(root_path: pathlib.Path) -> pathlib.Path:
     else:
         # On not having found a PAA dir, just return current dir to avoid blow-ups
         return pathlib.Path.cwd()
-
-
-def parse_pics(lines: typing.List[str]) -> dict[str, bool]:
-    pics = {}
-    for raw in lines:
-        line, _, _ = raw.partition("#")
-        line = line.strip()
-
-        if not line:
-            continue
-
-        key, _, val = line.partition("=")
-        val = val.strip()
-        if val not in ["1", "0"]:
-            raise ValueError('PICS {} must have a value of 0 or 1'.format(key))
-
-        pics[key.strip()] = (val == "1")
-    return pics
-
-
-def parse_pics_xml(contents: str) -> dict[str, bool]:
-    pics = {}
-    mytree = ET.fromstring(contents)
-    for pi in mytree.iter('picsItem'):
-        name = pi.find('itemNumber').text
-        support = pi.find('support').text
-        pics[name] = int(json.loads(support.lower())) == 1
-    return pics
-
-
-def read_pics_from_file(path: str) -> dict[str, bool]:
-    """ Reads a dictionary of PICS from a file (ci format) or directory (xml format). """
-    if os.path.isdir(os.path.abspath(path)):
-        pics_dict = {}
-        for filename in glob.glob(f'{path}/*.xml'):
-            with open(filename, 'r') as f:
-                contents = f.read()
-                pics_dict.update(parse_pics_xml(contents))
-        return pics_dict
-
-    else:
-        with open(path, 'r') as f:
-            lines = f.readlines()
-            return parse_pics(lines)
 
 
 def type_matches(received_value, desired_type):
@@ -311,6 +266,39 @@ class EventChangeCallback:
         return res.Data
 
 
+class AttributeChangeCallback:
+    def __init__(self, expected_attribute: ClusterObjects.ClusterAttributeDescriptor):
+        self._output = queue.Queue()
+        self._expected_attribute = expected_attribute
+
+    def __call__(self, path: TypedAttributePath, transaction: SubscriptionTransaction):
+        """This is the subscription callback when an attribute is updated.
+           It checks the passed in attribute is the same as the subscribed to attribute and
+           then posts it into the queue for later processing."""
+
+        asserts.assert_equal(path.AttributeType, self._expected_attribute,
+                             f"[AttributeChangeCallback] Attribute mismatch. Expected: {self._expected_attribute}, received: {path.AttributeType}")
+        logging.debug(f"[AttributeChangeCallback] Attribute update callback for {path.AttributeType}")
+        q = (path, transaction)
+        self._output.put(q)
+
+    def wait_for_report(self):
+        try:
+            path, transaction = self._output.get(block=True, timeout=10)
+        except queue.Empty:
+            asserts.fail(
+                f"[AttributeChangeCallback] Failed to receive a report for the {self._expected_attribute} attribute change")
+
+        asserts.assert_equal(path.AttributeType, self._expected_attribute,
+                             f"[AttributeChangeCallback] Received incorrect report. Expected: {self._expected_attribute}, received: {path.AttributeType}")
+        try:
+            attribute_value = transaction.GetAttribute(path)
+            logging.info(
+                f"[AttributeChangeCallback] Got attribute subscription report. Attribute {path.AttributeType}. Updated value: {attribute_value}. SubscriptionId: {transaction.subscriptionId}")
+        except KeyError:
+            asserts.fail("[AttributeChangeCallback] Attribute {expected_attribute} not found in returned report")
+
+
 class InternalTestRunnerHooks(TestRunnerHooks):
 
     def start(self, count: int):
@@ -319,7 +307,7 @@ class InternalTestRunnerHooks(TestRunnerHooks):
     def stop(self, duration: int):
         logging.info(f'Finished test set, ran for {duration}ms')
 
-    def test_start(self, filename: str, name: str, count: int):
+    def test_start(self, filename: str, name: str, count: int, steps: list[str] = []):
         logging.info(f'Starting test from {filename}: {name} - {count} steps')
 
     def test_stop(self, exception: Exception, duration: int):
@@ -462,7 +450,13 @@ class CustomCommissioningParameters:
 
 
 @dataclass
-class AttributePathLocation:
+class ProblemLocation:
+    def __str__(self):
+        return "UNKNOWN"
+
+
+@dataclass
+class AttributePathLocation(ProblemLocation):
     endpoint_id: int
     cluster_id: Optional[int] = None
     attribute_id: Optional[int] = None
@@ -487,7 +481,7 @@ class AttributePathLocation:
 
 
 @dataclass
-class EventPathLocation:
+class EventPathLocation(ProblemLocation):
     endpoint_id: int
     cluster_id: int
     event_id: int
@@ -499,7 +493,7 @@ class EventPathLocation:
 
 
 @dataclass
-class CommandPathLocation:
+class CommandPathLocation(ProblemLocation):
     endpoint_id: int
     cluster_id: int
     command_id: int
@@ -511,7 +505,7 @@ class CommandPathLocation:
 
 
 @dataclass
-class ClusterPathLocation:
+class ClusterPathLocation(ProblemLocation):
     endpoint_id: int
     cluster_id: int
 
@@ -521,7 +515,7 @@ class ClusterPathLocation:
 
 
 @dataclass
-class FeaturePathLocation:
+class FeaturePathLocation(ProblemLocation):
     endpoint_id: int
     cluster_id: int
     feature_code: str
@@ -545,7 +539,7 @@ class ProblemSeverity(str, Enum):
 @dataclass
 class ProblemNotice:
     test_name: str
-    location: Union[AttributePathLocation, EventPathLocation, CommandPathLocation, ClusterPathLocation, FeaturePathLocation]
+    location: ProblemLocation
     severity: ProblemSeverity
     problem: str
     spec_location: str = ""
@@ -684,10 +678,10 @@ class MatterBaseTest(base_test.BaseTestClass):
             in order using self.step(number), where number is the test_plan_number
             from each TestStep.
         '''
-        steps = self._get_defined_test_steps(test)
+        steps = self.get_defined_test_steps(test)
         return [TestStep(1, "Run entire test")] if steps is None else steps
 
-    def _get_defined_test_steps(self, test: str) -> list[TestStep]:
+    def get_defined_test_steps(self, test: str) -> list[TestStep]:
         steps_name = 'steps_' + test[5:]
         try:
             fn = getattr(self, steps_name)
@@ -781,11 +775,12 @@ class MatterBaseTest(base_test.BaseTestClass):
         self.step_skipped = False
         if self.runner_hook and not self.is_commissioning:
             test_name = self.current_test_info.name
-            steps = self._get_defined_test_steps(test_name)
+            steps = self.get_defined_test_steps(test_name)
             num_steps = 1 if steps is None else len(steps)
             filename = inspect.getfile(self.__class__)
             desc = self.get_test_desc(test_name)
-            self.runner_hook.test_start(filename=filename, name=desc, count=num_steps)
+            steps_descriptions = [] if steps is None else [step.description for step in steps]
+            self.runner_hook.test_start(filename=filename, name=desc, count=num_steps, steps=steps_descriptions)
             # If we don't have defined steps, we're going to start the one and only step now
             # if there are steps defined by the test, rely on the test calling the step() function
             # to indicates how it is proceeding
@@ -811,11 +806,11 @@ class MatterBaseTest(base_test.BaseTestClass):
         pics_key = pics_key.strip()
         return pics_key in picsd and picsd[pics_key]
 
-    def openCommissioningWindow(self, dev_ctrl: ChipDeviceCtrl, node_id: int) -> CustomCommissioningParameters:
+    async def openCommissioningWindow(self, dev_ctrl: ChipDeviceCtrl, node_id: int) -> CustomCommissioningParameters:
         rnd_discriminator = random.randint(0, 4095)
         try:
-            commissioning_params = dev_ctrl.OpenCommissioningWindow(nodeid=node_id, timeout=900, iteration=1000,
-                                                                    discriminator=rnd_discriminator, option=1)
+            commissioning_params = await dev_ctrl.OpenCommissioningWindow(nodeid=node_id, timeout=900, iteration=1000,
+                                                                          discriminator=rnd_discriminator, option=1)
             params = CustomCommissioningParameters(commissioning_params, rnd_discriminator)
             return params
 
@@ -940,13 +935,13 @@ class MatterBaseTest(base_test.BaseTestClass):
     def print_step(self, stepnum: typing.Union[int, str], title: str) -> None:
         logging.info(f'***** Test Step {stepnum} : {title}')
 
-    def record_error(self, test_name: str, location: Union[AttributePathLocation, EventPathLocation, CommandPathLocation, ClusterPathLocation, FeaturePathLocation], problem: str, spec_location: str = ""):
+    def record_error(self, test_name: str, location: ProblemLocation, problem: str, spec_location: str = ""):
         self.problems.append(ProblemNotice(test_name, location, ProblemSeverity.ERROR, problem, spec_location))
 
-    def record_warning(self, test_name: str, location: Union[AttributePathLocation, EventPathLocation, CommandPathLocation, ClusterPathLocation, FeaturePathLocation], problem: str, spec_location: str = ""):
+    def record_warning(self, test_name: str, location: ProblemLocation, problem: str, spec_location: str = ""):
         self.problems.append(ProblemNotice(test_name, location, ProblemSeverity.WARNING, problem, spec_location))
 
-    def record_note(self, test_name: str, location: Union[AttributePathLocation, EventPathLocation, CommandPathLocation, ClusterPathLocation, FeaturePathLocation], problem: str, spec_location: str = ""):
+    def record_note(self, test_name: str, location: ProblemLocation, problem: str, spec_location: str = ""):
         self.problems.append(ProblemNotice(test_name, location, ProblemSeverity.NOTE, problem, spec_location))
 
     def on_fail(self, record):
@@ -977,7 +972,7 @@ class MatterBaseTest(base_test.BaseTestClass):
             self.runner_hook.step_success(logger=None, logs=None, duration=step_duration, request=None)
 
         # TODO: this check could easily be annoying when doing dev. flag it somehow? Ditto with the in-order check
-        steps = self._get_defined_test_steps(record.test_name)
+        steps = self.get_defined_test_steps(record.test_name)
         if steps is None:
             # if we don't have a list of steps, assume they were all run
             all_steps_run = True
@@ -1105,15 +1100,13 @@ class MatterBaseTest(base_test.BaseTestClass):
 
     def wait_for_user_input(self,
                             prompt_msg: str,
-                            input_msg: str = "Press Enter when done.\n",
                             prompt_msg_placeholder: str = "Submit anything to continue",
                             default_value: str = "y") -> str:
         """Ask for user input and wait for it.
 
         Args:
-            prompt_msg (str): Message for TH UI prompt. Indicates what is expected from the user.
-            input_msg (str, optional): Prompt for input function, used when running tests manually. Defaults to "Press Enter when done.\n".
-            prompt_msg_placeholder (str, optional): TH UI prompt input placeholder. Defaults to "Submit anything to continue".
+            prompt_msg (str): Message for TH UI prompt and input function. Indicates what is expected from the user.
+            prompt_msg_placeholder (str, optional): TH UI prompt input placeholder (where the user types). Defaults to "Submit anything to continue".
             default_value (str, optional): TH UI prompt default value. Defaults to "y".
 
         Returns:
@@ -1123,7 +1116,7 @@ class MatterBaseTest(base_test.BaseTestClass):
             self.runner_hook.show_prompt(msg=prompt_msg,
                                          placeholder=prompt_msg_placeholder,
                                          default_value=default_value)
-        return input(input_msg)
+        return input(f'{prompt_msg.removesuffix(chr(10))}\n')
 
 
 def generate_mobly_test_config(matter_test_config: MatterTestConfig):
@@ -1569,10 +1562,10 @@ class CommissionDeviceTest(MatterBaseTest):
                          (conf.root_of_trust_index, conf.fabric_id, node_id))
             logging.info("Commissioning method: %s" % conf.commissioning_method)
 
-            if not self._commission_device(commission_idx):
+            if not asyncio.run(self._commission_device(commission_idx)):
                 raise signals.TestAbortAll("Failed to commission node")
 
-    def _commission_device(self, i) -> bool:
+    async def _commission_device(self, i) -> bool:
         dev_ctrl = self.default_controller
         conf = self.matter_test_config
 
@@ -1587,33 +1580,55 @@ class CommissionDeviceTest(MatterBaseTest):
             info.filter_value = conf.discriminators[i]
 
         if conf.commissioning_method == "on-network":
-            return dev_ctrl.CommissionOnNetwork(
-                nodeId=conf.dut_node_ids[i],
-                setupPinCode=info.passcode,
-                filterType=info.filter_type,
-                filter=info.filter_value
-            )
+            try:
+                await dev_ctrl.CommissionOnNetwork(
+                    nodeId=conf.dut_node_ids[i],
+                    setupPinCode=info.passcode,
+                    filterType=info.filter_type,
+                    filter=info.filter_value
+                )
+                return True
+            except ChipStackError as e:
+                logging.error("Commissioning failed: %s" % e)
+                return False
         elif conf.commissioning_method == "ble-wifi":
-            return dev_ctrl.CommissionWiFi(
-                info.filter_value,
-                info.passcode,
-                conf.dut_node_ids[i],
-                conf.wifi_ssid,
-                conf.wifi_passphrase
-            )
+            try:
+                await dev_ctrl.CommissionWiFi(
+                    info.filter_value,
+                    info.passcode,
+                    conf.dut_node_ids[i],
+                    conf.wifi_ssid,
+                    conf.wifi_passphrase,
+                    isShortDiscriminator=(info.filter_type == DiscoveryFilterType.SHORT_DISCRIMINATOR)
+                )
+                return True
+            except ChipStackError as e:
+                logging.error("Commissioning failed: %s" % e)
+                return False
         elif conf.commissioning_method == "ble-thread":
-            return dev_ctrl.CommissionThread(
-                info.filter_value,
-                info.passcode,
-                conf.dut_node_ids[i],
-                conf.thread_operational_dataset
-            )
+            try:
+                await dev_ctrl.CommissionThread(
+                    info.filter_value,
+                    info.passcode,
+                    conf.dut_node_ids[i],
+                    conf.thread_operational_dataset,
+                    isShortDiscriminator=(info.filter_type == DiscoveryFilterType.SHORT_DISCRIMINATOR)
+                )
+                return True
+            except ChipStackError as e:
+                logging.error("Commissioning failed: %s" % e)
+                return False
         elif conf.commissioning_method == "on-network-ip":
-            logging.warning("==== USING A DIRECT IP COMMISSIONING METHOD NOT SUPPORTED IN THE LONG TERM ====")
-            return dev_ctrl.CommissionIP(
-                ipaddr=conf.commissionee_ip_address_just_for_testing,
-                setupPinCode=info.passcode, nodeid=conf.dut_node_ids[i]
-            )
+            try:
+                logging.warning("==== USING A DIRECT IP COMMISSIONING METHOD NOT SUPPORTED IN THE LONG TERM ====")
+                await dev_ctrl.CommissionIP(
+                    ipaddr=conf.commissionee_ip_address_just_for_testing,
+                    setupPinCode=info.passcode, nodeid=conf.dut_node_ids[i]
+                )
+                return True
+            except ChipStackError as e:
+                logging.error("Commissioning failed: %s" % e)
+                return False
         else:
             raise ValueError("Invalid commissioning method %s!" % conf.commissioning_method)
 
@@ -1713,7 +1728,7 @@ def run_tests_no_exit(test_class: MatterBaseTest, matter_test_config: MatterTest
 
             if hooks:
                 # Right now, we only support running a single test class at once,
-                # but it's relatively easy to exapand that to make the test process faster
+                # but it's relatively easy to expand that to make the test process faster
                 # TODO: support a list of tests
                 hooks.start(count=1)
                 # Mobly gives the test run time in seconds, lets be a bit more precise

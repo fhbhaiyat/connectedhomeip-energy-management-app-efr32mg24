@@ -27,7 +27,7 @@
 
 #if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
 
-#include <ble/BleLayer.h>
+#include <ble/Ble.h>
 
 namespace chip {
 namespace DeviceLayer {
@@ -73,10 +73,6 @@ class BLEManagerImpl final : public BLEManager, private BleLayer, private BlePla
                         PacketBufferHandle pBuf);
     bool SendWriteRequest(BLE_CONNECTION_OBJECT conId, const ChipBleUUID * svcId, const ChipBleUUID * charId,
                           PacketBufferHandle pBuf);
-    bool SendReadRequest(BLE_CONNECTION_OBJECT conId, const ChipBleUUID * svcId, const ChipBleUUID * charId,
-                         PacketBufferHandle pBuf);
-    bool SendReadResponse(BLE_CONNECTION_OBJECT conId, BLE_READ_REQUEST_CONTEXT requestContext, const ChipBleUUID * svcId,
-                          const ChipBleUUID * charId);
 
     // ===== Members that implement virtual methods on BleApplicationDelegate.
 

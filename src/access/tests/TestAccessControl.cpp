@@ -19,11 +19,13 @@
 #include "access/AccessControl.h"
 #include "access/examples/ExampleAccessControlDelegate.h"
 
+#include <pw_unit_test/framework.h>
+
 #include <lib/core/CHIPCore.h>
+#include <lib/core/StringBuilderAdapters.h>
 
-#include <gtest/gtest.h>
-
-namespace {
+namespace chip {
+namespace Access {
 
 using namespace chip;
 using namespace chip::Access;
@@ -2189,4 +2191,5 @@ TEST_F(TestAccessControl, TestUpdateEntry)
     }
 }
 
-} // namespace
+} // namespace Access
+} // namespace chip
