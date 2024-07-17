@@ -136,7 +136,6 @@ silabs_executable("energy-management-app") {
   }
 
   sources = [
-    "${examples_common_plat_dir}/main.cpp",
     "${chip_root}/examples/energy-management-app/energy-management-common/src/DeviceEnergyManagementDelegateImpl.cpp",
     "${chip_root}/examples/energy-management-app/energy-management-common/src/DeviceEnergyManagementManager.cpp",
     "${chip_root}/examples/energy-management-app/energy-management-common/src/EVSEManufacturerImpl.cpp",
@@ -147,6 +146,7 @@ silabs_executable("energy-management-app") {
     "${chip_root}/examples/energy-management-app/energy-management-common/src/PowerTopologyDelegate.cpp",
     "${chip_root}/examples/energy-management-app/energy-management-common/src/device-energy-management-mode.cpp",
     "${chip_root}/examples/energy-management-app/energy-management-common/src/energy-evse-mode.cpp",
+    "${examples_common_plat_dir}/main.cpp",
     "src/AppTask.cpp",
   ]
 
